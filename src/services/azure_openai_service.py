@@ -62,26 +62,37 @@ class AzureOpenAIService(LLMService):
         
         # 获取所有环境变量
         env_vars = {}
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
-        if os.path.exists(env_path):
-            with open(env_path, 'r', encoding='utf-8') as f:
-                current_group = None
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith('## '):
-                        current_group = line[3:].strip()
-                        continue
-                    if line.startswith('#'):
-                        continue
-                    if '=' in line and current_group:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        if key.startswith('AZURE_'):
-                            if current_group not in env_vars:
-                                env_vars[current_group] = {}
-                            env_vars[current_group][key] = value.strip()
+        env_paths = [
+            "/mount/src/check-llm/.env",  # 线上环境路径
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')  # 本地环境路径
+        ]
+        
+        for env_path in env_paths:
+            if os.path.exists(env_path):
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    current_group = None
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith('## '):
+                            current_group = line[3:].strip()
+                            continue
+                        if line.startswith('#'):
+                            continue
+                        if '=' in line and current_group:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            if key.startswith('AZURE_') and value and value not in [
+                                'your_azure_openai_api_key',
+                                'your_aws_api_key',
+                                'your_google_api_key'
+                            ]:
+                                if current_group not in env_vars:
+                                    env_vars[current_group] = {}
+                                env_vars[current_group][key] = value.strip()
+                break  # 找到第一个存在的配置文件后就停止
         
         # 解析配置
         for group, vars in env_vars.items():

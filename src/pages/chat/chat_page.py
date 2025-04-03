@@ -14,47 +14,59 @@ def check_service_config(service_name: str) -> bool:
         return bool(os.getenv("OPENAI_API_KEY"))
     elif service_name == "Azure OpenAI":
         # 检查是否有任何Azure OpenAI配置组
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
-        if os.path.exists(env_path):
-            with open(env_path, 'r', encoding='utf-8') as f:
-                current_group = None
-                has_valid_config = False
-                current_config = {}
-                
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith('## '):
-                        # 检查上一个配置组是否有效
-                        if current_config and all(key in current_config for key in [
-                            'AZURE_OPENAI_API_KEY',
-                            'AZURE_OPENAI_ENDPOINT',
-                            'AZURE_DEPLOYMENT_NAME'
-                        ]):
-                            has_valid_config = True
-                            break
-                        current_group = line[3:].strip()
-                        current_config = {}
-                        continue
-                    if line.startswith('#'):
-                        continue
-                    if '=' in line and current_group:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip()
-                        if key.startswith('AZURE_') and value and value != 'your_azure_openai_api_key':
-                            current_config[key] = value
-                
-                # 检查最后一个配置组
-                if current_config and all(key in current_config for key in [
-                    'AZURE_OPENAI_API_KEY',
-                    'AZURE_OPENAI_ENDPOINT',
-                    'AZURE_DEPLOYMENT_NAME'
-                ]):
-                    has_valid_config = True
-                
-                return has_valid_config
+        # 首先尝试加载指定路径的配置文件
+        env_paths = [
+            "/mount/src/check-llm/.env",  # 线上环境路径
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')  # 本地环境路径
+        ]
+        
+        for env_path in env_paths:
+            if os.path.exists(env_path):
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    current_group = None
+                    has_valid_config = False
+                    current_config = {}
+                    
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith('## '):
+                            # 检查上一个配置组是否有效
+                            if current_config and all(key in current_config for key in [
+                                'AZURE_OPENAI_API_KEY',
+                                'AZURE_OPENAI_ENDPOINT',
+                                'AZURE_DEPLOYMENT_NAME'
+                            ]):
+                                has_valid_config = True
+                                break
+                            current_group = line[3:].strip()
+                            current_config = {}
+                            continue
+                        if line.startswith('#'):
+                            continue
+                        if '=' in line and current_group:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            if key.startswith('AZURE_') and value and value not in [
+                                'your_azure_openai_api_key',
+                                'your_aws_api_key',
+                                'your_google_api_key'
+                            ]:
+                                current_config[key] = value
+                    
+                    # 检查最后一个配置组
+                    if current_config and all(key in current_config for key in [
+                        'AZURE_OPENAI_API_KEY',
+                        'AZURE_OPENAI_ENDPOINT',
+                        'AZURE_DEPLOYMENT_NAME'
+                    ]):
+                        has_valid_config = True
+                    
+                    if has_valid_config:
+                        return True
+        
         return False
     elif service_name == "Anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY"))
