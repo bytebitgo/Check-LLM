@@ -2,6 +2,7 @@ import os
 from typing import List, Dict, Optional, AsyncGenerator, Union
 from openai import AsyncAzureOpenAI
 from datetime import datetime
+import tiktoken
 from .base import LLMService, ModelInfo, CompletionResponse
 from .factory import LLMServiceFactory
 
@@ -33,6 +34,9 @@ class AzureOpenAIService(LLMService):
         # 根据部署名称判断模型类型
         self.model_type = "gpt-4" if "gpt-4" in deployment_name.lower() else "gpt-35-turbo"
         
+        # 初始化 tiktoken 编码器
+        self.encoding = tiktoken.encoding_for_model("gpt-4" if self.model_type == "gpt-4" else "gpt-3.5-turbo")
+        
         self.models = {
             deployment_name: ModelInfo(
                 name=deployment_name,
@@ -44,6 +48,23 @@ class AzureOpenAIService(LLMService):
             )
         }
     
+    def count_message_tokens(self, messages: List[Dict[str, str]]) -> int:
+        """使用 tiktoken 计算消息的 token 数量"""
+        num_tokens = 0
+        for message in messages:
+            # 每条消息开始时的 token
+            num_tokens += 4  # 每个消息都有一个系统级别的格式标记
+            for key, value in message.items():
+                num_tokens += len(self.encoding.encode(str(value)))
+                if key == "name":  # 如果消息中包含名字
+                    num_tokens += -1  # 名字的 token 计数规则略有不同
+        num_tokens += 2  # 对话的结束标记
+        return num_tokens
+
+    def count_completion_tokens(self, text: str) -> int:
+        """使用 tiktoken 计算完成响应的 token 数量"""
+        return len(self.encoding.encode(text))
+
     async def get_available_models(self) -> List[str]:
         """获取可用模型列表"""
         return list(self.models.keys())
@@ -68,6 +89,9 @@ class AzureOpenAIService(LLMService):
             if not model:
                 model = self.deployment_name
                 
+            # 计算输入消息的 token 数量
+            input_tokens = self.count_message_tokens(messages)
+                
             # 移除Azure OpenAI不支持的参数
             supported_params = {
                 "temperature",
@@ -87,7 +111,7 @@ class AzureOpenAIService(LLMService):
                 start_time = datetime.now()
                 
                 response = await self.client.chat.completions.create(
-                    model=self.deployment_name,  # 使用部署名称作为模型名称
+                    model=self.deployment_name,
                     messages=messages,
                     stream=True,
                     **filtered_kwargs
@@ -108,22 +132,18 @@ class AzureOpenAIService(LLMService):
                     except (IndexError, AttributeError):
                         continue
                 
-                # 在流式响应结束后获取完整的响应以获取token统计
-                full_response = await self.client.chat.completions.create(
-                    model=self.deployment_name,
-                    messages=messages,
-                    stream=False,
-                    **filtered_kwargs
-                )
+                # 计算完成响应的 token 数量
+                completion_tokens = self.count_completion_tokens(full_content)
+                total_tokens = input_tokens + completion_tokens
                 
                 end_time = datetime.now()
                 yield {
                     "type": "stats",
                     "stats": {
                         "content": full_content,
-                        "prompt_tokens": full_response.usage.prompt_tokens,
-                        "completion_tokens": full_response.usage.completion_tokens,
-                        "total_tokens": full_response.usage.total_tokens,
+                        "prompt_tokens": input_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens,
                         "response_time": (end_time - start_time).total_seconds()
                     }
                 }
@@ -140,11 +160,13 @@ class AzureOpenAIService(LLMService):
                 **filtered_kwargs
             )
             
+            completion_tokens = self.count_completion_tokens(response.choices[0].message.content)
+            
             return {
                 "content": response.choices[0].message.content,
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
+                "prompt_tokens": input_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": input_tokens + completion_tokens
             }
                 
         except Exception as e:

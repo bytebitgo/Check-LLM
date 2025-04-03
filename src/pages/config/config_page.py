@@ -6,26 +6,19 @@ import json
 def get_project_root():
     """获取项目根目录"""
     current_path = os.path.abspath(__file__)
+    # 从当前文件位置向上查找，直到找到包含 src 目录的目录
     while current_path != '/':
-        if os.path.exists(os.path.join(current_path, 'config', '.env')):
-            return current_path
+        if os.path.basename(os.path.dirname(current_path)) == 'src':
+            return os.path.dirname(os.path.dirname(current_path))
         current_path = os.path.dirname(current_path)
-    return None
+    # 如果找不到，返回当前文件所在的目录的上两级目录
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def get_env_path():
     """获取环境变量文件路径"""
-    # 首先检查项目根目录下的.env
-    root_env = os.path.join(get_project_root(), '.env')
-    if os.path.exists(root_env):
-        return root_env
-    
-    # 然后检查config目录下的.env
-    config_env = os.path.join(get_project_root(), 'config', '.env')
-    if os.path.exists(config_env):
-        return config_env
-    
-    # 如果都不存在，返回项目根目录下的路径（用于创建新文件）
-    return root_env
+    # 总是返回项目根目录下的 .env 文件路径
+    root_dir = get_project_root()
+    return os.path.join(root_dir, '.env')
 
 def load_env_config() -> Dict[str, str]:
     """加载环境变量配置"""
