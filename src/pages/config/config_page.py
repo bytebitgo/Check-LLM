@@ -190,7 +190,7 @@ def config_page():
                         
                         save_env_config(st.session_state.env_config)
                         st.success(f"已添加 Azure OpenAI 配置组: {new_group}")
-                        st.experimental_rerun()
+                        st.rerun()
             else:
                 # 自定义配置
                 st.markdown("### 自定义配置")
@@ -219,7 +219,7 @@ def config_page():
                         }
                         save_env_config(st.session_state.env_config)
                         st.success(f"已添加配置: {new_key}")
-                        st.experimental_rerun()
+                        st.rerun()
     
     # 配置组操作
     if st.session_state.env_config:
@@ -271,7 +271,7 @@ def config_page():
                                 }
                         save_env_config(st.session_state.env_config)
                         st.success(f"已复制配置组: {new_group_name}")
-                        st.experimental_rerun()
+                        st.rerun()
                 
                 with col3:
                     if st.button(f"删除配置组: {group}", key=f"delete_{group}"):
@@ -288,7 +288,7 @@ def config_page():
                         
                         save_env_config(st.session_state.env_config)
                         st.success(f"已删除配置组: {group}")
-                        st.experimental_rerun()
+                        st.rerun()
                 
                 # 显示每个分类下的配置
                 for section in sorted(sections.keys()):
@@ -323,7 +323,7 @@ def config_page():
                                     key=f"show_{key}"
                                 ):
                                     st.session_state.show_values[key] = not st.session_state.show_values[key]
-                                    st.experimental_rerun()
+                                    st.rerun()
                             
                             with col3:
                                 # 删除按钮
@@ -333,6 +333,6 @@ def config_page():
                                         del st.session_state.show_values[key]
                                     save_env_config(st.session_state.env_config)
                                     st.success(f"已删除配置: {key}")
-                                    st.experimental_rerun()
+                                    st.rerun()
     else:
         st.info("暂无配置项") 
