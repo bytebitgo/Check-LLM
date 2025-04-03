@@ -27,22 +27,46 @@ def load_env_config() -> Dict[str, str]:
     
     if os.path.exists(env_path):
         with open(env_path, 'r', encoding='utf-8') as f:
-            current_section = None
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    if line.startswith('#'):
-                        current_section = line[1:].strip()
-                    continue
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    config[key.strip()] = {
-                        'value': value.strip(),
-                        'section': current_section
-                    }
+            lines = f.readlines()
+            
+        current_group = None
+        current_section = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            if line.startswith('## '):  # 使用双井号标记配置组
+                current_group = line[3:].strip()
+                continue
+                
+            if line.startswith('# '):  # 单井号标记配置分类
+                current_section = line[1:].strip()
+                continue
+                
+            if '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                
+                # 使用默认值处理 None 的情况
+                group = current_group if current_group else '默认配置'
+                section = current_section if current_section else '默认分类'
+                
+                config[key] = {
+                    'value': value,
+                    'section': section,
+                    'group': group
+                }
     
     # 显示当前使用的配置文件路径
     st.sidebar.info(f"当前配置文件: {env_path}")
+    
+    # 调试信息
+    st.sidebar.write("已加载的配置组：", sorted(set(data['group'] for data in config.values())))
+    st.sidebar.write("配置项数量：", len(config))
+    
     return config
 
 def save_env_config(config: Dict[str, Dict[str, str]]):
@@ -52,21 +76,78 @@ def save_env_config(config: Dict[str, Dict[str, str]]):
     # 确保目录存在
     os.makedirs(os.path.dirname(env_path), exist_ok=True)
     
-    # 按section分组
-    sections = {}
+    # 按配置组和section分组
+    groups = {}
     for key, data in config.items():
-        section = data['section']
-        if section not in sections:
-            sections[section] = []
-        sections[section].append((key, data['value']))
+        group = data.get('group', '默认配置')
+        section = data.get('section', '默认分类')
+        if group not in groups:
+            groups[group] = {}
+        if section not in groups[group]:
+            groups[group][section] = []
+        groups[group][section].append((key, data['value']))
+    
+    # 读取现有的配置文件，保留其他配置组
+    existing_groups = {}
+    if os.path.exists(env_path):
+        current_group = None
+        current_section = None
+        
+        with open(env_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # 处理每一行
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            if line.startswith('## '):  # 新的配置组
+                current_group = line[3:].strip()
+                # 如果是新组且不在当前配置中，初始化它
+                if current_group not in groups:
+                    existing_groups[current_group] = {}
+                
+            elif line.startswith('# '):  # 新的分类
+                current_section = line[1:].strip()
+                # 如果当前组不在新配置中，为新分类创建列表
+                if current_group and current_group not in groups:
+                    if current_section not in existing_groups[current_group]:
+                        existing_groups[current_group][current_section] = []
+                
+            elif '=' in line and current_group and current_section:  # 配置项
+                if current_group not in groups:  # 只处理不在新配置中的组
+                    key, value = line.split('=', 1)
+                    existing_groups[current_group][current_section].append(
+                        (key.strip(), value.strip())
+                    )
+    
+    # 合并现有配置组和新配置组
+    all_groups = {**existing_groups, **groups}
     
     # 写入文件
     with open(env_path, 'w', encoding='utf-8') as f:
-        for section, items in sections.items():
-            f.write(f"# {section}\n")
-            for key, value in items:
-                f.write(f"{key}={value}\n")
-            f.write("\n")
+        # 按字母顺序排序所有组
+        for group in sorted(all_groups.keys()):
+            # 写入组标记
+            f.write(f"## {group}\n\n")
+            
+            sections = all_groups[group]
+            if not sections:  # 如果组没有分类，添加默认分类
+                f.write("# 默认分类\n\n")
+                continue
+            
+            # 按字母顺序排序分类
+            for section in sorted(sections.keys()):
+                # 写入分类标记
+                f.write(f"# {section}\n")
+                
+                # 写入配置项
+                items = sections[section]
+                if items:  # 只有当有配置项时才写入
+                    for key, value in sorted(items):
+                        f.write(f"{key}={value}\n")
+                f.write("\n")
 
 def config_page():
     """配置管理页面"""
@@ -74,105 +155,220 @@ def config_page():
     
     # 初始化session state
     if 'env_config' not in st.session_state:
-        st.session_state.env_config = load_env_config()
+        st.session_state.env_config = {}
     if 'show_values' not in st.session_state:
         st.session_state.show_values = {}
+    
+    # 每次页面加载时重新读取配置
+    st.session_state.env_config = load_env_config()
     
     # 添加新配置的表单
     with st.expander("添加新配置", expanded=False):
         with st.form("add_config"):
-            sections = sorted(set(
-                data['section'] for data in st.session_state.env_config.values()
-                if data['section']
+            # 获取现有的配置组和分类，确保处理 None 值
+            groups = list(set(
+                data.get('group', '默认配置') for data in st.session_state.env_config.values()
             ))
+            groups = sorted([g for g in groups if g is not None] + ['默认配置'])
             
+            sections = list(set(
+                data.get('section', '默认分类') for data in st.session_state.env_config.values()
+            ))
+            sections = sorted([s for s in sections if s is not None] + ['默认分类'])
+            
+            # 配置组选择
             col1, col2 = st.columns(2)
             with col1:
-                new_section = st.selectbox(
-                    "配置分类",
-                    options=["新建分类"] + sections
+                new_group = st.selectbox(
+                    "配置组",
+                    options=["新建配置组"] + groups,
+                    key="new_group"
                 )
                 
-                if new_section == "新建分类":
-                    new_section = st.text_input("输入新分类名称")
+                if new_group == "新建配置组":
+                    new_group = st.text_input("输入配置组名称")
             
+            # 配置类型选择
             with col2:
-                new_key = st.text_input("配置键名")
-                new_value = st.text_input("配置值", type="password")
+                config_type = st.selectbox(
+                    "配置类型",
+                    options=["Azure OpenAI", "自定义配置"],
+                    key="config_type"
+                )
             
-            if st.form_submit_button("添加"):
-                if new_section and new_key:
-                    st.session_state.env_config[new_key] = {
-                        'value': new_value,
-                        'section': new_section
-                    }
-                    save_env_config(st.session_state.env_config)
-                    st.success(f"已添加配置: {new_key}")
-                    st.rerun()
-    
-    # 显示和编辑现有配置
-    if st.session_state.env_config:
-        # 按section分组显示
-        sections = {}
-        for key, data in st.session_state.env_config.items():
-            section = data['section']
-            if section not in sections:
-                sections[section] = []
-            sections[section].append((key, data))
-        
-        for section, items in sorted(sections.items()):
-            st.subheader(section)
-            for key, data in sorted(items):
-                col1, col2, col3 = st.columns([3, 1, 1])
-                
-                # 初始化显示状态
-                if key not in st.session_state.show_values:
-                    st.session_state.show_values[key] = False
-                
+            if config_type == "Azure OpenAI":
+                # Azure OpenAI 配置模板
+                st.markdown("### Azure OpenAI 配置")
+                col1, col2 = st.columns(2)
                 with col1:
-                    # 根据显示状态决定是否隐藏值
-                    input_type = "default" if st.session_state.show_values[key] else "password"
-                    new_value = st.text_input(
-                        key,
-                        value=data['value'],
-                        type=input_type,
-                        key=f"input_{key}"
-                    )
-                    if new_value != data['value']:
-                        st.session_state.env_config[key]['value'] = new_value
+                    api_key = st.text_input("API Key", type="password", key="azure_api_key")
+                    endpoint = st.text_input("Endpoint", key="azure_endpoint")
+                with col2:
+                    deployment = st.text_input("Deployment Name", key="azure_deployment")
+                    api_version = st.text_input("API Version", value="2024-02-15-preview", key="azure_api_version")
+                
+                if st.form_submit_button("添加 Azure OpenAI 配置"):
+                    if new_group and api_key and endpoint and deployment:
+                        # 添加一组 Azure OpenAI 配置
+                        configs = {
+                            "AZURE_OPENAI_API_KEY": api_key,
+                            "AZURE_OPENAI_ENDPOINT": endpoint,
+                            "AZURE_DEPLOYMENT_NAME": deployment,
+                            "AZURE_OPENAI_API_VERSION": api_version
+                        }
+                        
+                        for key, value in configs.items():
+                            st.session_state.env_config[key] = {
+                                'value': value,
+                                'section': 'Azure OpenAI配置',
+                                'group': new_group
+                            }
+                        
                         save_env_config(st.session_state.env_config)
-                        st.success(f"已更新配置: {key}")
+                        st.success(f"已添加 Azure OpenAI 配置组: {new_group}")
+                        st.experimental_rerun()
+            else:
+                # 自定义配置
+                st.markdown("### 自定义配置")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    new_section = st.selectbox(
+                        "配置分类",
+                        options=["新建分类"] + sections,
+                        key="new_section"
+                    )
+                    if new_section == "新建分类":
+                        new_section = st.text_input("输入新分类名称")
                 
                 with col2:
-                    # 显示/隐藏按钮
-                    if st.button(
-                        "显示" if not st.session_state.show_values[key] else "隐藏",
-                        key=f"show_{key}"
-                    ):
-                        st.session_state.show_values[key] = not st.session_state.show_values[key]
-                        st.rerun()
+                    new_key = st.text_input("配置键名", key="new_key")
                 
                 with col3:
-                    # 删除按钮
-                    if st.button("删除", key=f"delete_{key}"):
-                        del st.session_state.env_config[key]
-                        if key in st.session_state.show_values:
-                            del st.session_state.show_values[key]
+                    new_value = st.text_input("配置值", type="password", key="new_value")
+                
+                if st.form_submit_button("添加配置"):
+                    if new_group and new_section and new_key:
+                        st.session_state.env_config[new_key] = {
+                            'value': new_value,
+                            'section': new_section,
+                            'group': new_group
+                        }
                         save_env_config(st.session_state.env_config)
-                        st.success(f"已删除配置: {key}")
-                        st.rerun()
-    else:
-        st.info("暂无配置项")
+                        st.success(f"已添加配置: {new_key}")
+                        st.experimental_rerun()
     
-    # 导出配置按钮
-    if st.button("导出配置"):
-        # 创建用于导出的配置（不包含敏感信息）
-        export_config = {
-            key: "******" for key in st.session_state.env_config.keys()
-        }
-        st.download_button(
-            "下载配置模板",
-            data=json.dumps(export_config, indent=2, ensure_ascii=False),
-            file_name="config_template.json",
-            mime="application/json"
-        ) 
+    # 配置组操作
+    if st.session_state.env_config:
+        # 按配置组和section分组显示
+        groups = {}
+        for key, data in st.session_state.env_config.items():
+            group = data.get('group', '默认配置')  # 使用默认值处理 None
+            section = data.get('section', '默认分类')  # 使用默认值处理 None
+            if group not in groups:
+                groups[group] = {}
+            if section not in groups[group]:
+                groups[group][section] = []
+            groups[group][section].append((key, data))
+        
+        # 显示所有配置组
+        for group in sorted(groups.keys()):
+            sections = groups[group]
+            with st.expander(f"配置组: {group}", expanded=True):
+                # 配置组操作按钮
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button(f"导出配置组: {group}", key=f"export_{group}"):
+                        # 创建用于导出的配置（不包含敏感信息）
+                        export_config = {}
+                        for section, items in sections.items():
+                            for key, data in items:
+                                if key not in export_config:
+                                    export_config[key] = "******"
+                        
+                        st.download_button(
+                            f"下载 {group} 配置模板",
+                            data=json.dumps(export_config, indent=2, ensure_ascii=False),
+                            file_name=f"{group}_template.json",
+                            mime="application/json",
+                            key=f"download_{group}"
+                        )
+                
+                with col2:
+                    if st.button(f"复制配置组: {group}", key=f"copy_{group}"):
+                        new_group_name = f"{group}_copy"
+                        # 复制配置组中的所有配置
+                        for section, items in sections.items():
+                            for key, data in items:
+                                new_key = f"{key}_copy"
+                                st.session_state.env_config[new_key] = {
+                                    'value': data['value'],
+                                    'section': data.get('section', '默认分类'),
+                                    'group': new_group_name
+                                }
+                        save_env_config(st.session_state.env_config)
+                        st.success(f"已复制配置组: {new_group_name}")
+                        st.experimental_rerun()
+                
+                with col3:
+                    if st.button(f"删除配置组: {group}", key=f"delete_{group}"):
+                        # 删除配置组中的所有配置
+                        keys_to_delete = []
+                        for section, items in sections.items():
+                            for key, _ in items:
+                                keys_to_delete.append(key)
+                                if key in st.session_state.show_values:
+                                    del st.session_state.show_values[key]
+                        
+                        for key in keys_to_delete:
+                            del st.session_state.env_config[key]
+                        
+                        save_env_config(st.session_state.env_config)
+                        st.success(f"已删除配置组: {group}")
+                        st.experimental_rerun()
+                
+                # 显示每个分类下的配置
+                for section in sorted(sections.keys()):
+                    items = sections[section]
+                    if items:  # 只显示有配置项的分类
+                        st.subheader(section)
+                        for key, data in sorted(items):
+                            col1, col2, col3 = st.columns([3, 1, 1])
+                            
+                            # 初始化显示状态
+                            if key not in st.session_state.show_values:
+                                st.session_state.show_values[key] = False
+                            
+                            with col1:
+                                # 根据显示状态决定是否隐藏值
+                                input_type = "default" if st.session_state.show_values[key] else "password"
+                                new_value = st.text_input(
+                                    key,
+                                    value=data['value'],
+                                    type=input_type,
+                                    key=f"input_{key}"
+                                )
+                                if new_value != data['value']:
+                                    st.session_state.env_config[key]['value'] = new_value
+                                    save_env_config(st.session_state.env_config)
+                                    st.success(f"已更新配置: {key}")
+                            
+                            with col2:
+                                # 显示/隐藏按钮
+                                if st.button(
+                                    "显示" if not st.session_state.show_values[key] else "隐藏",
+                                    key=f"show_{key}"
+                                ):
+                                    st.session_state.show_values[key] = not st.session_state.show_values[key]
+                                    st.experimental_rerun()
+                            
+                            with col3:
+                                # 删除按钮
+                                if st.button("删除", key=f"delete_{key}"):
+                                    del st.session_state.env_config[key]
+                                    if key in st.session_state.show_values:
+                                        del st.session_state.show_values[key]
+                                    save_env_config(st.session_state.env_config)
+                                    st.success(f"已删除配置: {key}")
+                                    st.experimental_rerun()
+    else:
+        st.info("暂无配置项") 
