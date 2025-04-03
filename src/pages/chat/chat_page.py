@@ -13,26 +13,40 @@ def check_service_config(service_name: str) -> bool:
     if service_name == "OpenAI":
         return bool(os.getenv("OPENAI_API_KEY"))
     elif service_name == "Azure OpenAI":
-        return all([
-            os.getenv("AZURE_OPENAI_API_KEY"),
-            os.getenv("AZURE_OPENAI_ENDPOINT"),
-            os.getenv("AZURE_DEPLOYMENT_NAME")
-        ])
+        # 检查是否有任何Azure OpenAI配置组
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+        if os.path.exists(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                # 如果文件中包含Azure OpenAI的必要配置项，就认为配置完整
+                return all(key in content for key in [
+                    "AZURE_OPENAI_API_KEY",
+                    "AZURE_OPENAI_ENDPOINT",
+                    "AZURE_DEPLOYMENT_NAME"
+                ])
+        return False
     elif service_name == "Anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY"))
     return False
 
 async def get_service_provider():
     """获取服务提供商"""
+    # 初始化session state
+    if 'provider' not in st.session_state:
+        st.session_state.provider = None
+    if 'model' not in st.session_state:
+        st.session_state.model = None
+    
     providers = {
-        "OpenAI": OpenAIService,
-        "Azure OpenAI": AzureOpenAIService,
-        "Anthropic": AnthropicService
+        "openai": "OpenAI",
+        "azure-openai": "Azure OpenAI",
+        "anthropic": "Anthropic",
+        "google": "Google"
     }
     
     # 获取已配置的服务提供商
     available_providers = {
-        name: cls for name, cls in providers.items()
+        key: name for key, name in providers.items()
         if check_service_config(name)
     }
     
@@ -41,28 +55,34 @@ async def get_service_provider():
         return None, None
     
     # 选择服务提供商
-    provider_name = st.selectbox(
+    provider = st.selectbox(
         "选择服务提供商",
-        options=list(available_providers.keys())
+        options=list(available_providers.keys()),
+        format_func=lambda x: available_providers[x]
     )
     
-    if not provider_name:
+    if not provider:
         return None, None
     
     # 实例化服务
     try:
-        service = available_providers[provider_name]()
+        service = LLMServiceFactory.get_service(provider)
         models = await service.get_available_models()
         
         if not models:
-            st.error(f"{provider_name} 未获取到可用模型，请检查配置是否正确")
+            st.error(f"{providers[provider]} 未获取到可用模型，请检查配置是否正确")
             return None, None
         
-        model = st.selectbox("选择模型", options=models)
-        return service, model
+        model = st.selectbox(
+            "选择模型",
+            options=models,
+            format_func=lambda x: x.split(" - ")[-1] if " - " in x else x
+        )
+        
+        return provider, model
         
     except Exception as e:
-        st.error(f"初始化 {provider_name} 服务失败: {str(e)}")
+        st.error(f"初始化 {providers[provider]} 服务失败: {str(e)}")
         return None, None
 
 async def chat_page():
@@ -116,7 +136,7 @@ async def chat_page():
                     message_placeholder.markdown("🤔 思考中...")
                     
                     # 获取流式响应
-                    response_generator = await provider.chat_completion(
+                    response_generator = await LLMServiceFactory.get_service(provider).chat_completion(
                         messages=[
                             {"role": msg["role"], "content": msg["content"]}
                             for msg in st.session_state.messages
@@ -141,7 +161,7 @@ async def chat_page():
                             })
                             
                             # 获取模型信息以计算成本
-                            model_info = await provider.get_model_info(model)
+                            model_info = await LLMServiceFactory.get_service(provider).get_model_info(model)
                             
                             if model_info and model_info.pricing:
                                 # 计算成本
@@ -166,7 +186,7 @@ async def chat_page():
                                 
                                 # 添加性能记录
                                 performance_record = {
-                                    "provider": provider.__class__.__name__,
+                                    "provider": provider,
                                     "model": model,
                                     "response_time": chunk["stats"]["response_time"],
                                     "prompt_tokens": chunk["stats"]["prompt_tokens"],
