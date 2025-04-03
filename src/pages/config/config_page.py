@@ -45,7 +45,7 @@ def load_env_config() -> Dict[str, str]:
                 current_section = line[1:].strip()
                 continue
                 
-            if '=' in line:
+            if '=' in line and current_group:  # 配置项
                 key, value = line.split('=', 1)
                 key = key.strip()
                 value = value.strip()
@@ -54,18 +54,18 @@ def load_env_config() -> Dict[str, str]:
                 group = current_group if current_group else '默认配置'
                 section = current_section if current_section else '默认分类'
                 
-                config[key] = {
+                # 使用组名作为前缀创建唯一键名
+                unique_key = f"{group}_{key}"
+                
+                config[unique_key] = {
                     'value': value,
                     'section': section,
-                    'group': group
+                    'group': group,
+                    'original_key': key  # 保存原始键名
                 }
     
     # 显示当前使用的配置文件路径
     st.sidebar.info(f"当前配置文件: {env_path}")
-    
-    # 调试信息
-    st.sidebar.write("已加载的配置组：", sorted(set(data['group'] for data in config.values())))
-    st.sidebar.write("配置项数量：", len(config))
     
     return config
 
@@ -85,54 +85,18 @@ def save_env_config(config: Dict[str, Dict[str, str]]):
             groups[group] = {}
         if section not in groups[group]:
             groups[group][section] = []
-        groups[group][section].append((key, data['value']))
-    
-    # 读取现有的配置文件，保留其他配置组
-    existing_groups = {}
-    if os.path.exists(env_path):
-        current_group = None
-        current_section = None
-        
-        with open(env_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        # 处理每一行
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            if line.startswith('## '):  # 新的配置组
-                current_group = line[3:].strip()
-                # 如果是新组且不在当前配置中，初始化它
-                if current_group not in groups:
-                    existing_groups[current_group] = {}
-                
-            elif line.startswith('# '):  # 新的分类
-                current_section = line[1:].strip()
-                # 如果当前组不在新配置中，为新分类创建列表
-                if current_group and current_group not in groups:
-                    if current_section not in existing_groups[current_group]:
-                        existing_groups[current_group][current_section] = []
-                
-            elif '=' in line and current_group and current_section:  # 配置项
-                if current_group not in groups:  # 只处理不在新配置中的组
-                    key, value = line.split('=', 1)
-                    existing_groups[current_group][current_section].append(
-                        (key.strip(), value.strip())
-                    )
-    
-    # 合并现有配置组和新配置组
-    all_groups = {**existing_groups, **groups}
+        # 使用原始键名保存配置
+        original_key = data.get('original_key', key.split('_', 1)[1] if '_' in key else key)
+        groups[group][section].append((original_key, data['value']))
     
     # 写入文件
     with open(env_path, 'w', encoding='utf-8') as f:
         # 按字母顺序排序所有组
-        for group in sorted(all_groups.keys()):
+        for group in sorted(groups.keys()):
             # 写入组标记
             f.write(f"## {group}\n\n")
             
-            sections = all_groups[group]
+            sections = groups[group]
             if not sections:  # 如果组没有分类，添加默认分类
                 f.write("# 默认分类\n\n")
                 continue
